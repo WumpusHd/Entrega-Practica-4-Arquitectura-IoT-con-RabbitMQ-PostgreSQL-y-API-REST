@@ -1,0 +1,116 @@
+services:
+
+  # ============================================================
+  # RabbitMQ - Message Broker
+  # ============================================================
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq_server
+    ports:
+      - "5672:5672"     # Puerto AMQP
+      - "15672:15672"   # Puerto interfaz web de administración
+    environment:
+      RABBITMQ_DEFAULT_USER: user
+      RABBITMQ_DEFAULT_PASS: password
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # PostgreSQL - Base de datos
+  # ============================================================
+  postgres:
+    image: postgres:15
+    container_name: postgres_db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: iot_db
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U user -d iot_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # API REST - Recibe peticiones y publica a RabbitMQ
+  # ============================================================
+  api:
+    build: .
+    container_name: api_rest
+    volumes:
+      - .:/app
+    ports:
+      - "5000:5000"
+    command: tail -f /dev/null  # Ejecutar manualmente: docker exec -it api_rest python api.py
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ============================================================
+  # Consumer POST - Cola que procesa creación de órdenes
+  # ============================================================
+  consumer_post:
+    build: .
+    container_name: consumer_post
+    volumes:
+      - .:/app
+    command: tail -f /dev/null  # Ejecutar manualmente: docker exec -it consumer_post python consumer_post.py
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ============================================================
+  # Worker / Consumer DELETE - Cola que procesa eliminación
+  # ============================================================
+  consumer_delete:
+    build: .
+    container_name: consumer_delete
+    volumes:
+      - .:/app
+    command: tail -f /dev/null  # Ejecutar manualmente: docker exec -it consumer_delete python consumer_delete.py
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # ============================================================
+  # Productor de eventos sintéticos (cliente HTTP)
+  # ============================================================
+  producer:
+    build: .
+    container_name: producer
+    volumes:
+      - .:/app
+    command: tail -f /dev/null  # Ejecutar manualmente: docker exec -it producer python producer.py
+    depends_on:
+      - api
+      - consumer_post
+      - consumer_delete
+
+  # ============================================================
+  # Cliente Python (para los ejercicios anteriores de clase)
+  # ============================================================
+  python-client:
+    build: .
+    volumes:
+      - .:/app
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    command: tail -f /dev/null
+
+volumes:
+  pgdata:
